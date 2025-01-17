@@ -1,5 +1,5 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Transform: 'AWS::Serverless-2016-10-31'
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
 Description: An AWS Serverless Specification template describing your function.
 Parameters:
   Stage:
@@ -12,15 +12,15 @@ Parameters:
     Type: Number
     Default: 4000
 Resources:
-#----------------------------------API-----------------------------------
+  #----------------------------------API-----------------------------------
   ApiGwSetting:
     Type: AWS::ApiGateway::Account
-    Properties: 
+    Properties:
       CloudWatchRoleArn: !GetAtt ApiRole.Arn
-  RestApi:
+  RestApiAll:
     Type: AWS::Serverless::Api
     Properties:
-      OpenApiVersion: '3.0.1'
+      OpenApiVersion: "3.0.1"
       StageName: !Ref Stage
       EndpointConfiguration:
         Type: REGIONAL
@@ -28,7 +28,7 @@ Resources:
         Fn::Transform:
           Name: "AWS::Include"
           Parameters:
-            Location: "./api-spec.yaml"
+            Location: "./api-spec-all.yaml"
       Auth:
         ApiKeyRequired: true
         UsagePlan:
@@ -36,46 +36,72 @@ Resources:
       AccessLogSetting:
         DestinationArn: !GetAtt ApiGwCwLogGroup.Arn
         Format: '{"RequestId":"$context.requestId", "RequestTime":"$context.requestTime", "RequesterIp":"$context.identity.sourceIp", "PrincipalId":"$context.authorizer.principalId", "HttpMethod":"$context.httpMethod", "Resource":"$context.path", "AuthorizationStatusCode":"$context.authorize.status","ResponseStatusCode":"$context.integration.status", "ErrorMsg":"$context.authorizer.errorMessage"}'
-#----------------------------------CWL-----------------------------------
+  RestApiRestricted:
+    Type: AWS::Serverless::Api
+    Properties:
+      OpenApiVersion: "3.0.1"
+      StageName: !Ref Stage
+      EndpointConfiguration:
+        Type: REGIONAL
+      DefinitionBody:
+        Fn::Transform:
+          Name: "AWS::Include"
+          Parameters:
+            Location: "./api-spec-restricted.yaml"
+      Auth:
+        ApiKeyRequired: true
+        UsagePlan:
+          CreateUsagePlan: PER_API
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiGwCwLogGroup.Arn
+        Format: '{"RequestId":"$context.requestId", "RequestTime":"$context.requestTime", "RequesterIp":"$context.identity.sourceIp", "PrincipalId":"$context.authorizer.principalId", "HttpMethod":"$context.httpMethod", "Resource":"$context.path", "AuthorizationStatusCode":"$context.authorize.status","ResponseStatusCode":"$context.integration.status", "ErrorMsg":"$context.authorizer.errorMessage"}'
+  #----------------------------------CWL-----------------------------------
   ApiGwCwLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: 
+    Properties:
       LogGroupName: !Sub "apigw-${AWS::StackName}"
       RetentionInDays: 90
-#----------------------------Lambda Functions----------------------------
+  #----------------------------Lambda Functions----------------------------
   LambdaFunction:
-    Type: 'AWS::Serverless::Function'
+    Type: "AWS::Serverless::Function"
     Properties:
       Handler: com.amazonaws.samples.entrypoints.ServiceHandler
       Runtime: java11
       CodeUri: ./target/pseudonymization-service-1.0-SNAPSHOT.jar
-      Description: 'Lambda function that hosts the psedonymization/re-identification logic'
+      Description: "Lambda function that hosts the psedonymization/re-identification logic"
       MemorySize: 1024
       Timeout: 60
       Role: !GetAtt LambdaRole.Arn
       Environment:
         Variables:
           CACHE_SIZE: !Ref CacheSize
-          KmsKeyArn: !GetAtt 'KmsKeyId.Arn'
+          KmsKeyArn: !GetAtt "KmsKeyId.Arn"
           SECRET_CACHE_SIZE: !Ref SecretCacheSize
           SECRET_ARN: !Sub "EncryptionKeys-${AWS::StackName}"
           SECRET_REGION: !Sub ${AWS::Region}
-#--------------------------------lambdaApiGatewayInvoke-----------------------------------
-  lambdaApiGatewayPseudonymInvoke:
+  #--------------------------------lambdaApiGatewayInvoke-----------------------------------
+  lambdaApiGatewayPseudonymInvokeRestricted:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !GetAtt LambdaFunction.Arn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/POST/pseudonymization
-  lambdaApiGatewayReidentifyInvoke:
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiRestricted}/*/POST/pseudonymization
+  lambdaApiGatewayPseudonymInvokeAll:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !GetAtt LambdaFunction.Arn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/POST/reidentification
-#--------------------------------Roles-----------------------------------
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiAll}/*/POST/pseudonymization
+  lambdaApiGatewayReidentifyInvokeAll:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunction.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiAll}/*/POST/reidentification
+  #--------------------------------Roles-----------------------------------
   LambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -105,7 +131,7 @@ Resources:
               - sts:AssumeRole
       ManagedPolicyArns:
         - !Ref ApiCWPermissionsPolicy
-#-------------------------------Policies---------------------------------
+  #-------------------------------Policies---------------------------------
   LambdaCWPermissionsPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -114,34 +140,32 @@ Resources:
         Statement:
           - Effect: Allow
             Action:
-              - 'logs:CreateLogStream'
-              - 'logs:PutLogEvents'
-              - 'logs:DescribeLogStreams'
-              - 'logs:GetLogEvents'
-              - 'logs:CreateLogGroup'
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+              - "logs:DescribeLogStreams"
+              - "logs:GetLogEvents"
+              - "logs:CreateLogGroup"
             Resource:
-              - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
   LambdaEncryptionPermissionsPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       PolicyDocument:
         Version: 2012-10-17
         Statement:
-          - 
-            Effect: Allow
+          - Effect: Allow
             Action:
-              - 'secretsmanager:GetSecretValue'
-              - 'secretsmanager:DescribeSecret'
-              - 'secretsmanager:ListSecretVersionIds'
-              - 'secretsmanager:TagResource'
-              - 'secretsmanager:UntagResource'
+              - "secretsmanager:GetSecretValue"
+              - "secretsmanager:DescribeSecret"
+              - "secretsmanager:ListSecretVersionIds"
+              - "secretsmanager:TagResource"
+              - "secretsmanager:UntagResource"
             Resource: !Ref EncryptionKeys
-          - 
-            Effect: Allow
+          - Effect: Allow
             Action:
-              - 'kms:DescribeKey'
-              - 'kms:Decrypt'
-            Resource: !GetAtt 'KmsKeyId.Arn'
+              - "kms:DescribeKey"
+              - "kms:Decrypt"
+            Resource: !GetAtt "KmsKeyId.Arn"
   ApiCWPermissionsPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -150,25 +174,25 @@ Resources:
         Statement:
           - Effect: Allow
             Action:
-              - 'logs:CreateLogStream'
-              - 'logs:PutLogEvents'
-              - 'logs:DescribeLogStreams'
-              - 'logs:GetLogEvents'
-              - 'logs:CreateLogGroup'
-              - 'logs:DescribeLogGroups'
-              - 'logs:FilterLogEvents'
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+              - "logs:DescribeLogStreams"
+              - "logs:GetLogEvents"
+              - "logs:CreateLogGroup"
+              - "logs:DescribeLogGroups"
+              - "logs:FilterLogEvents"
             Resource:
-              - '*'
-#----------------------------SecretManager--------------------------------
+              - "*"
+  #----------------------------SecretManager--------------------------------
   EncryptionKeys:
     Type: "AWS::SecretsManager::Secret"
     Properties:
       KmsKeyId: !Ref KmsKeyId
       Name: !Sub "EncryptionKeys-${AWS::StackName}"
-#--------------------------------KMS-------------------------------------
-  KmsKeyId: 
+  #--------------------------------KMS-------------------------------------
+  KmsKeyId:
     Type: AWS::KMS::Key
-    Properties: 
+    Properties:
       Enabled: true
       EnableKeyRotation: true
       KeyPolicy:
@@ -178,17 +202,19 @@ Resources:
           - Sid: Enable IAM User Permissions
             Effect: Allow
             Principal:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
-            Action: 'kms:*'
-            Resource: '*'
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
       KeySpec: SYMMETRIC_DEFAULT
- #------------------------------Outputs-----------------------------------     
+  #------------------------------Outputs-----------------------------------
 Outputs:
+  PseudonymizationRestrictedUrl:
+    Value: !Sub "https://${RestApiRestricted}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/pseudonymization"
   PseudonymizationUrl:
-    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/pseudonymization"
+    Value: !Sub "https://${RestApiAll}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/pseudonymization"
   ReidentificationUrl:
-    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/reidentification"
+    Value: !Sub "https://${RestApiAll}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/reidentification"
   KmsKeyArn:
-    Value: !GetAtt 'KmsKeyId.Arn'
-  SecretName: 
+    Value: !GetAtt "KmsKeyId.Arn"
+  SecretName:
     Value: !Sub "EncryptionKeys-${AWS::StackName}"
